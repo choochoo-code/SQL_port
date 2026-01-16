@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Merge CSV to SQL</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        label {
+            font-weight: bold;
+            display: block;
+            margin-top: 20px;
+            margin-bottom: 8px;
+        }
+        select, input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            margin-top: 20px;
+            background-color: #4CAF50;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .back-link {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #4CAF50;
+            text-decoration: none;
+        }
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-link">&larr; Back to Home</a>
+        <h1>Merge Option CSV Files into SQL</h1>
+
+        <form action="/merge_data" method="POST" enctype="multipart/form-data">
+            <label for="schema">1. Select Schema:</label>
+            <select id="schema" name="schema" required>
+                <option value="">-- Select Schema --</option>
+                {% for schema in schemas %}
+                <option value="{{ schema }}">{{ schema }}</option>
+                {% endfor %}
+            </select>
+
+            <label for="table">2. Select Table:</label>
+            <select id="table" name="table" required disabled>
+                <option value="">-- Select Schema First --</option>
+            </select>
+
+            <label for="csv_files">3. Upload CSV Files:</label>
+            <input type="file" name="csv_files" multiple accept=".csv" required>
+
+            <button type="submit">Upload and Merge</button>
+        </form>
+    </div>
+
+    <script>
+        document.getElementById('schema').addEventListener('change', function() {
+            const schema = this.value;
+            const tableSelect = document.getElementById('table');
+
+            if (!schema) {
+                tableSelect.disabled = true;
+                tableSelect.innerHTML = '<option value="">-- Select Schema First --</option>';
+                return;
+            }
+
+            fetch(`/api/tables/${schema}`)
+                .then(response => response.json())
+                .then(tables => {
+                    tableSelect.innerHTML = '<option value="">-- Select Table --</option>';
+                    tables.forEach(table => {
+                        const option = document.createElement('option');
+                        option.value = table;
+                        option.textContent = table;
+                        tableSelect.appendChild(option);
+                    });
+                    tableSelect.disabled = false;
+                })
+                .catch(error => {
+                    console.error('Error fetching tables:', error);
+                    alert('Error loading tables');
+                });
+        });
+    </script>
+</body>
+</html>
