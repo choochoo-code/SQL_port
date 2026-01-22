@@ -112,13 +112,38 @@ def merge_option_data():
                 existing_rows = cur.fetchall()
             conn.close()
 
+            # Helper to normalize datetime to string for comparison
+            def normalize_dt(val):
+                if val is None:
+                    return ''
+                if hasattr(val, 'strftime'):
+                    return val.strftime('%Y-%m-%d %H:%M:%S')
+                # Handle pandas Timestamp
+                s = str(val)
+                # Remove any timezone info and normalize format
+                s = s.replace('T', ' ').split('.')[0].split('+')[0]
+                return s.strip()
+
             # Create set of existing keys for fast lookup
             existing_keys = set()
             for row in existing_rows:
                 if table == 'ib_stock_1min':
-                    existing_keys.add(str(row[0]))
+                    existing_keys.add(normalize_dt(row[0]))
                 else:
-                    existing_keys.add((row[0], row[1], str(row[2]), str(row[3])))
+                    # (StrikePrice, ContractType, ExpiryDate, Timestamp)
+                    key = (
+                        int(row[0]),
+                        str(row[1]).strip(),
+                        normalize_dt(row[2]),
+                        normalize_dt(row[3])
+                    )
+                    existing_keys.add(key)
+
+            # Debug: print sample keys
+            print(f"[DEBUG] Existing keys count: {len(existing_keys)}")
+            if existing_keys:
+                sample = list(existing_keys)[:2]
+                print(f"[DEBUG] Sample existing keys: {sample}")
 
             # Filter out rows that already exist in SQL
             rows_before_filter = len(merged_data)
@@ -126,11 +151,30 @@ def merge_option_data():
 
             def row_exists(row):
                 if table == 'ib_stock_1min':
-                    key = str(row['Timestamp'])
+                    key = normalize_dt(row['Timestamp'])
                 else:
-                    key = (row['StrikePrice'], row['ContractType'],
-                           str(row['ExpiryDate']), str(row['Timestamp']))
+                    key = (
+                        int(row['StrikePrice']),
+                        str(row['ContractType']).strip(),
+                        normalize_dt(row['ExpiryDate']),
+                        normalize_dt(row['Timestamp'])
+                    )
                 return key in existing_keys
+
+            # Debug: print sample CSV keys
+            if len(merged_data) > 0:
+                sample_row = merged_data.iloc[0]
+                if table == 'ib_stock_1min':
+                    sample_key = normalize_dt(sample_row['Timestamp'])
+                else:
+                    sample_key = (
+                        int(sample_row['StrikePrice']),
+                        str(sample_row['ContractType']).strip(),
+                        normalize_dt(sample_row['ExpiryDate']),
+                        normalize_dt(sample_row['Timestamp'])
+                    )
+                print(f"[DEBUG] Sample CSV key: {sample_key}")
+                print(f"[DEBUG] Key in existing: {sample_key in existing_keys}")
 
             # Identify duplicates and collect info
             mask = merged_data.apply(row_exists, axis=1)
