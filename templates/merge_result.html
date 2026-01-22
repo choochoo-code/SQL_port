@@ -93,21 +93,25 @@
                 <div class="stat-label">CSV Rows</div>
                 <div class="stat-number">{{ total_rows }}</div>
             </div>
+            {% if csv_dupes > 0 %}
+            <div class="stat-card" style="background-color: #f8d7da; border: 1px solid #f5c6cb;">
+                <div class="stat-label">CSV Dupes</div>
+                <div class="stat-number">-{{ csv_dupes }}</div>
+            </div>
+            {% endif %}
+            <div class="stat-card skipped">
+                <div class="stat-label">SQL Dupes</div>
+                <div class="stat-number">{{ duplicates_skipped }}</div>
+            </div>
             <div class="stat-card inserted">
                 <div class="stat-label">Inserted</div>
                 <div class="stat-number">{{ rows_inserted }}</div>
             </div>
-            <div class="stat-card skipped">
-                <div class="stat-label">Duplicates Skipped</div>
-                <div class="stat-number">{{ duplicates_skipped }}</div>
-            </div>
         </div>
 
-        {% if csv_dupes > 0 %}
-        <p style="color: #856404; background: #fff3cd; padding: 10px; border-radius: 4px;">
-            Note: {{ csv_dupes }} duplicate(s) found within CSV files (removed before checking SQL)
+        <p style="color: #666; font-size: 14px; margin-top: 10px;">
+            {{ total_rows }} (CSV) {% if csv_dupes > 0 %}- {{ csv_dupes }} (CSV dupes) {% endif %}= {{ total_rows - csv_dupes }} unique rows &rarr; {{ rows_inserted }} inserted + {{ duplicates_skipped }} already in SQL
         </p>
-        {% endif %}
 
         {% if skipped_rows and skipped_rows|length > 0 %}
         <div class="log-section">
