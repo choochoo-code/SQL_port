@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SQL Data Transform Service</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .menu {
+            margin-top: 30px;
+        }
+        .menu-item {
+            display: block;
+            padding: 15px 20px;
+            margin: 10px 0;
+            background-color: #4CAF50;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        .menu-item:hover {
+            background-color: #45a049;
+        }
+        .description {
+            color: #666;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SQL Data Transform Service</h1>
+        <p>Choose a service:</p>
+
+        <div class="menu">
+
+            <a href="/merge_data" class="menu-item">
+                Merge CSV to SQL Table
+            </a>
+            <div class="description">
+                Upload a CSV file and insert its content into a target SQL schema and table
+            </div>
+
+            <a href="/resample" class="menu-item">
+                Option Resample (1min to higher timeframes)
+            </a>
+            <div class="description">
+                Transform 1-minute option data to 3min, 5min, 15min, or 1hr timeframes
+            </div>
+
+            <a href="/add_row" class="menu-item">
+                Add Row to Table
+            </a>
+            <div class="description">
+                Manually add a row to an existing database table
+            </div>
+        </div>
+    </div>
+</body>
+</html>
