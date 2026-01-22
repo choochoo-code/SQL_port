@@ -2,116 +2,165 @@
 <html>
 <head>
     <title>Merge CSV to SQL</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 40px;
-            background-color: #f5f5f5;
-        }
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            background-color: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        h1 {
-            color: #333;
-            border-bottom: 2px solid #4CAF50;
-            padding-bottom: 10px;
-        }
-        label {
-            font-weight: bold;
-            display: block;
-            margin-top: 20px;
-            margin-bottom: 8px;
-        }
-        select, input[type="file"] {
-            width: 100%;
-            padding: 10px;
-            font-size: 14px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-        }
-        button {
-            margin-top: 20px;
-            background-color: #4CAF50;
-            color: white;
-            padding: 12px 30px;
-            border: none;
-            border-radius: 4px;
-            font-size: 16px;
-            cursor: pointer;
-        }
-        button:hover {
-            background-color: #45a049;
-        }
-        .back-link {
-            display: inline-block;
-            margin-bottom: 20px;
-            color: #4CAF50;
-            text-decoration: none;
-        }
-        .back-link:hover {
-            text-decoration: underline;
-        }
-    </style>
+    <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
     <div class="container">
         <a href="/" class="back-link">&larr; Back to Home</a>
         <h1>Merge Option CSV Files into SQL</h1>
 
-        <form action="/merge_data" method="POST" enctype="multipart/form-data">
-            <label for="schema">1. Select Schema:</label>
-            <select id="schema" name="schema" required>
-                <option value="">-- Select Schema --</option>
-                {% for schema in schemas %}
-                <option value="{{ schema }}">{{ schema }}</option>
-                {% endfor %}
-            </select>
+        <form action="/merge_data" method="POST" enctype="multipart/form-data" id="mergeForm">
+            <div class="form-group">
+                <label for="schema">1. Select Schema:</label>
+                <select id="schema" name="schema" required>
+                    <option value="">-- Select Schema --</option>
+                    {% for schema in schemas %}
+                    <option value="{{ schema }}">{{ schema }}</option>
+                    {% endfor %}
+                </select>
+            </div>
 
-            <label for="table">2. Select Table:</label>
-            <select id="table" name="table" required disabled>
-                <option value="">-- Select Schema First --</option>
-            </select>
+            <div class="form-group">
+                <label>2. Select Target Table:</label>
+                <div class="checkbox-group" id="tableCheckboxes">
+                    <div class="checkbox-item disabled">
+                        <span class="table-info">
+                            <span class="table-name">-- Select Schema First --</span>
+                        </span>
+                    </div>
+                </div>
+            </div>
 
-            <label for="csv_files">3. Upload CSV Files:</label>
-            <input type="file" name="csv_files" multiple accept=".csv" required>
+            <div class="form-group">
+                <label for="csv_files">3. Upload CSV Files:</label>
+                <input type="file" name="csv_files" id="csv_files" multiple accept=".csv" required>
+            </div>
 
-            <button type="submit">Upload and Merge</button>
+            <button type="submit" id="submitBtn" disabled>Upload and Merge</button>
         </form>
     </div>
 
     <script>
+        let selectedTable = null;
+
         document.getElementById('schema').addEventListener('change', function() {
             const schema = this.value;
-            const tableSelect = document.getElementById('table');
+            const checkboxContainer = document.getElementById('tableCheckboxes');
+            const submitBtn = document.getElementById('submitBtn');
+
+            selectedTable = null;
+            submitBtn.disabled = true;
 
             if (!schema) {
-                tableSelect.disabled = true;
-                tableSelect.innerHTML = '<option value="">-- Select Schema First --</option>';
+                checkboxContainer.innerHTML = `
+                    <div class="checkbox-item disabled">
+                        <span class="table-info">
+                            <span class="table-name">-- Select Schema First --</span>
+                        </span>
+                    </div>
+                `;
                 return;
             }
 
-            fetch(`/api/tables/${schema}`)
+            // Show loading
+            checkboxContainer.innerHTML = `
+                <div class="checkbox-item disabled">
+                    <span class="table-info">
+                        <span class="table-name">Loading tables...</span>
+                    </span>
+                </div>
+            `;
+
+            // Fetch base tables status
+            fetch(`/api/base_tables/${schema}`)
                 .then(response => response.json())
                 .then(tables => {
-                    tableSelect.innerHTML = '<option value="">-- Select Table --</option>';
-                    tables.forEach(table => {
-                        const option = document.createElement('option');
-                        option.value = table;
-                        option.textContent = table;
-                        tableSelect.appendChild(option);
+                    checkboxContainer.innerHTML = '';
+
+                    Object.entries(tables).forEach(([tableName, info]) => {
+                        const div = document.createElement('div');
+                        div.className = 'checkbox-item' + (info.exists ? ' exists' : '');
+                        div.dataset.table = tableName;
+
+                        const radio = document.createElement('input');
+                        radio.type = 'radio';
+                        radio.name = 'table';
+                        radio.value = tableName;
+                        radio.id = 'table_' + tableName;
+
+                        const labelDiv = document.createElement('div');
+                        labelDiv.className = 'table-info';
+
+                        const nameSpan = document.createElement('span');
+                        nameSpan.className = 'table-name';
+                        nameSpan.textContent = info.display;
+
+                        const statusSpan = document.createElement('span');
+                        statusSpan.className = 'table-status ' + (info.exists ? 'status-exists' : 'status-new');
+                        statusSpan.textContent = info.exists
+                            ? '(Table exists - will append data)'
+                            : '(Table will be created)';
+
+                        labelDiv.appendChild(nameSpan);
+                        labelDiv.appendChild(document.createElement('br'));
+                        labelDiv.appendChild(statusSpan);
+
+                        div.appendChild(radio);
+                        div.appendChild(labelDiv);
+
+                        // Click handler for the whole row
+                        div.addEventListener('click', function(e) {
+                            if (e.target !== radio) {
+                                radio.checked = true;
+                            }
+                            selectedTable = tableName;
+                            submitBtn.disabled = false;
+
+                            // Update visual selection
+                            document.querySelectorAll('.checkbox-item').forEach(item => {
+                                item.classList.remove('selected');
+                            });
+                            div.classList.add('selected');
+                        });
+
+                        checkboxContainer.appendChild(div);
                     });
-                    tableSelect.disabled = false;
                 })
                 .catch(error => {
                     console.error('Error fetching tables:', error);
-                    alert('Error loading tables');
+                    checkboxContainer.innerHTML = `
+                        <div class="checkbox-item disabled">
+                            <span class="table-info">
+                                <span class="table-name" style="color: red;">Error loading tables</span>
+                            </span>
+                        </div>
+                    `;
                 });
         });
+
+        // Form validation
+        document.getElementById('mergeForm').addEventListener('submit', function(e) {
+            if (!selectedTable) {
+                e.preventDefault();
+                alert('Please select a target table');
+                return false;
+            }
+
+            const files = document.getElementById('csv_files').files;
+            if (files.length === 0) {
+                e.preventDefault();
+                alert('Please select at least one CSV file');
+                return false;
+            }
+        });
     </script>
+
+    <style>
+        .checkbox-item.selected {
+            border-color: #4CAF50;
+            background-color: #e8f5e9;
+            box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.3);
+        }
+    </style>
 </body>
 </html>

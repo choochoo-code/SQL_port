@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Merge Complete - SQL Data Transform</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Upload Complete</h1>
+
+        <div class="results" style="display: block;">
+            <div class="result-item result-success">
+                <strong>CSV rows processed:</strong> {{ total_rows }}
+            </div>
+            <div class="result-item result-success">
+                <strong>Rows inserted:</strong> {{ rows_inserted }}
+            </div>
+            {% if duplicates_skipped > 0 %}
+            <div class="result-item" style="background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba;">
+                <strong>Duplicates skipped:</strong> {{ duplicates_skipped }}
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="action-links">
+            <a href="/">Return Home</a>
+            <a href="/merge_data">Merge More Files</a>
+        </div>
+    </div>
+</body>
+</html>

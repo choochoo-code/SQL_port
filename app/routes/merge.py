@@ -1,0 +1,171 @@
+"""
+Merge CSV to SQL routes
+"""
+import os
+import re
+import pandas as pd
+from datetime import datetime
+from flask import Blueprint, render_template, request, jsonify
+
+from app.services import (
+    get_db_connection,
+    get_sqlalchemy_engine,
+    get_schemas,
+    get_base_tables_status,
+    create_base_table,
+    BASE_TABLES
+)
+
+merge_bp = Blueprint('merge', __name__)
+
+
+def parse_filename(filename: str):
+    """
+    Parse CSV filename to extract symbol, type, and timeframe.
+    Expected pattern: ib_data_<date>_<symbol>_<call|put>_<timeframe>_<date>.csv
+    Example: ib_data_01152026_qqq_call_1min_2026-01-23.csv
+    """
+    pattern = r".*_(?P<symbol>[a-zA-Z]+)_(?P<type>call|put)_(?P<tf>\d+min)_.*\.csv$"
+    match = re.match(pattern, filename.lower())
+    if not match:
+        return None
+    return match.groupdict()
+
+
+@merge_bp.route('/merge_data', methods=['GET', 'POST'])
+def merge_option_data():
+    if request.method == 'POST':
+        schema = request.form.get('schema')
+        table = request.form.get('table')
+        files = request.files.getlist('csv_files')
+
+        if not schema or not table:
+            return "Missing schema or table", 400
+        if not files or all(f.filename == '' for f in files):
+            return "No files uploaded", 400
+
+        # Validate table is a known base table
+        if table not in BASE_TABLES:
+            return f"Invalid table: {table}", 400
+
+        # Create table if it doesn't exist
+        create_base_table(schema, table)
+
+        # Validate file names match selected table
+        for file in files:
+            if file.filename == '':
+                continue
+            parsed = parse_filename(file.filename)
+            if not parsed:
+                return f"Invalid filename format: {file.filename}", 400
+
+            symbol = parsed['symbol']
+            option_type = parsed['type']
+            timeframe = parsed['tf']
+
+            # Schema must start with symbol
+            if not schema.lower().startswith(f"{symbol}_"):
+                return (
+                    f"Filename `{file.filename}` implies symbol `{symbol}`, "
+                    f"but selected schema is `{schema}`"
+                ), 400
+
+            # For option tables, validate type matches
+            if table != 'ib_stock_1min':
+                table_lower = table.lower()
+                if option_type not in table_lower or timeframe not in table_lower:
+                    return (
+                        f"Filename `{file.filename}` implies option type `{option_type}` "
+                        f"and timeframe `{timeframe}`, but selected table is `{table}`"
+                    ), 400
+
+        # Merge CSV files
+        merged_data = pd.DataFrame()
+        total_rows_from_csv = 0
+
+        for file in files:
+            if file.filename == '':
+                continue
+            try:
+                df = pd.read_csv(file)
+                total_rows_from_csv += len(df)
+                merged_data = pd.concat([merged_data, df], ignore_index=True)
+            except Exception as e:
+                return f"Error reading {file.filename}: {e}", 500
+
+        # Drop duplicates based on table type
+        if table == 'ib_stock_1min':
+            merged_data.drop_duplicates(subset=['Timestamp'], inplace=True)
+        else:
+            merged_data.drop_duplicates(
+                subset=['StrikePrice', 'ContractType', 'ExpiryDate', 'Timestamp'],
+                inplace=True
+            )
+
+        try:
+            engine = get_sqlalchemy_engine(schema)
+
+            # Get before count with a fresh connection
+            conn_before = get_db_connection(schema)
+            with conn_before.cursor() as cur:
+                cur.execute(f"SELECT COUNT(*) FROM `{table}`")
+                before_count = cur.fetchone()[0]
+            conn_before.close()
+
+            # Insert data
+            merged_data.to_sql(
+                table,
+                con=engine,
+                schema=schema,
+                if_exists='append',
+                index=False
+            )
+
+            # Get after count with a NEW connection
+            conn_after = get_db_connection(schema)
+            with conn_after.cursor() as cur:
+                cur.execute(f"SELECT COUNT(*) FROM `{table}`")
+                after_count = cur.fetchone()[0]
+            conn_after.close()
+
+            rows_inserted = after_count - before_count
+            duplicates_skipped = len(merged_data) - rows_inserted
+
+        except Exception as e:
+            return f"Database error: {e}", 500
+
+        # Logging
+        log_dir = os.path.join(os.getcwd(), "log")
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "merge_log.csv")
+
+        log_entry = pd.DataFrame([{
+            "datetime": datetime.now(),
+            "schema": schema,
+            "table": table,
+            "rows_from_csv": total_rows_from_csv,
+            "rows_merged": rows_inserted,
+            "duplicates_skipped": duplicates_skipped,
+            "files_uploaded": ', '.join(f.filename for f in files if f.filename)
+        }])
+
+        log_entry.to_csv(
+            log_path,
+            mode='a',
+            index=False,
+            header=not os.path.exists(log_path)
+        )
+
+        return render_template('merge_result.html',
+                               total_rows=total_rows_from_csv,
+                               rows_inserted=rows_inserted,
+                               duplicates_skipped=duplicates_skipped)
+
+    schemas = get_schemas()
+    return render_template("merge_data.html", schemas=schemas)
+
+
+@merge_bp.route('/api/base_tables/<schema>')
+def api_get_base_tables(schema):
+    """Get status of base tables in a schema"""
+    return jsonify(get_base_tables_status(schema))
