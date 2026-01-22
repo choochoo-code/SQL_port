@@ -93,43 +93,72 @@ def merge_option_data():
             except Exception as e:
                 return f"Error reading {file.filename}: {e}", 500
 
-        # Drop duplicates based on table type
+        # Drop duplicates within CSV files first
         if table == 'ib_stock_1min':
-            merged_data.drop_duplicates(subset=['Timestamp'], inplace=True)
+            key_cols = ['Timestamp']
         else:
-            merged_data.drop_duplicates(
-                subset=['StrikePrice', 'ContractType', 'ExpiryDate', 'Timestamp'],
-                inplace=True
-            )
+            key_cols = ['StrikePrice', 'ContractType', 'ExpiryDate', 'Timestamp']
+
+        csv_dupes_count = len(merged_data) - len(merged_data.drop_duplicates(subset=key_cols))
+        merged_data.drop_duplicates(subset=key_cols, inplace=True)
 
         try:
             engine = get_sqlalchemy_engine(schema)
 
-            # Get before count with a fresh connection
-            conn_before = get_db_connection(schema)
-            with conn_before.cursor() as cur:
-                cur.execute(f"SELECT COUNT(*) FROM `{table}`")
-                before_count = cur.fetchone()[0]
-            conn_before.close()
+            # Get existing keys from SQL table to check for duplicates
+            conn = get_db_connection(schema)
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT {', '.join(key_cols)} FROM `{table}`")
+                existing_rows = cur.fetchall()
+            conn.close()
 
-            # Insert data
-            merged_data.to_sql(
-                table,
-                con=engine,
-                schema=schema,
-                if_exists='append',
-                index=False
-            )
+            # Create set of existing keys for fast lookup
+            existing_keys = set()
+            for row in existing_rows:
+                if table == 'ib_stock_1min':
+                    existing_keys.add(str(row[0]))
+                else:
+                    existing_keys.add((row[0], row[1], str(row[2]), str(row[3])))
 
-            # Get after count with a NEW connection
-            conn_after = get_db_connection(schema)
-            with conn_after.cursor() as cur:
-                cur.execute(f"SELECT COUNT(*) FROM `{table}`")
-                after_count = cur.fetchone()[0]
-            conn_after.close()
+            # Filter out rows that already exist in SQL
+            rows_before_filter = len(merged_data)
+            skipped_rows = []
 
-            rows_inserted = after_count - before_count
-            duplicates_skipped = len(merged_data) - rows_inserted
+            def row_exists(row):
+                if table == 'ib_stock_1min':
+                    key = str(row['Timestamp'])
+                else:
+                    key = (row['StrikePrice'], row['ContractType'],
+                           str(row['ExpiryDate']), str(row['Timestamp']))
+                return key in existing_keys
+
+            # Identify duplicates and collect info
+            mask = merged_data.apply(row_exists, axis=1)
+            duplicate_rows = merged_data[mask]
+
+            for _, row in duplicate_rows.iterrows():
+                skipped_rows.append({
+                    'StrikePrice': row.get('StrikePrice', 'N/A'),
+                    'ContractType': row.get('ContractType', 'N/A'),
+                    'ExpiryDate': str(row.get('ExpiryDate', 'N/A')),
+                    'Timestamp': str(row.get('Timestamp', 'N/A'))
+                })
+
+            # Keep only new rows
+            new_data = merged_data[~mask]
+            duplicates_skipped = rows_before_filter - len(new_data)
+
+            # Insert only new data
+            rows_inserted = 0
+            if len(new_data) > 0:
+                new_data.to_sql(
+                    table,
+                    con=engine,
+                    schema=schema,
+                    if_exists='append',
+                    index=False
+                )
+                rows_inserted = len(new_data)
 
         except Exception as e:
             return f"Database error: {e}", 500
@@ -159,7 +188,9 @@ def merge_option_data():
         return render_template('merge_result.html',
                                total_rows=total_rows_from_csv,
                                rows_inserted=rows_inserted,
-                               duplicates_skipped=duplicates_skipped)
+                               duplicates_skipped=duplicates_skipped,
+                               csv_dupes=csv_dupes_count,
+                               skipped_rows=skipped_rows[:100])
 
     schemas = get_schemas()
     return render_template("merge_data.html", schemas=schemas)
