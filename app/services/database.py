@@ -10,15 +10,15 @@ DB_CONFIG = Config.DATABASE
 # Base tables that should exist in each schema
 BASE_TABLES = {
     'ib_2w_call_1min': {
-        'display': 'Call Options (1min)',
+        'display': 'ib_2w_call_1min',
         'type': 'call'
     },
     'ib_2w_put_1min': {
-        'display': 'Put Options (1min)',
+        'display': 'ib_2w_put_1min',
         'type': 'put'
     },
     'ib_stock_1min': {
-        'display': 'Stock Data (1min)',
+        'display': 'ib_stock_1min',
         'type': 'stock'
     }
 }
