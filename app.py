@@ -332,10 +332,12 @@ def merge_option_data():
         try:
             engine = connect_to_sql(schema)
 
-            conn = get_db_connection(schema)
-            with conn.cursor() as cur:
+            # Get before count with a fresh connection (then close it)
+            conn_before = get_db_connection(schema)
+            with conn_before.cursor() as cur:
                 cur.execute(f"SELECT COUNT(*) FROM `{table}`")
                 before_count = cur.fetchone()[0]
+            conn_before.close()
 
             merged_options.to_sql(
                 table,
@@ -345,10 +347,12 @@ def merge_option_data():
                 index=False
             )
 
-            with conn.cursor() as cur:
+            # Get after count with a NEW connection to see committed changes
+            conn_after = get_db_connection(schema)
+            with conn_after.cursor() as cur:
                 cur.execute(f"SELECT COUNT(*) FROM `{table}`")
                 after_count = cur.fetchone()[0]
-            conn.close()
+            conn_after.close()
 
             rows_inserted = after_count - before_count
             duplicates_skipped = len(merged_options) - rows_inserted
