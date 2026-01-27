@@ -129,26 +129,41 @@ def create_base_table(schema, table_name):
         conn.close()
 
 
-def create_resampled_table(schema, dest_table):
-    """Create destination table for resampled option data"""
+def create_resampled_table(schema, dest_table, table_type='option'):
+    """Create destination table for resampled data"""
     conn = get_db_connection(schema)
     try:
         with conn.cursor() as cur:
             cur.execute(f"DROP TABLE IF EXISTS `{schema}`.`{dest_table}`")
-            create_sql = f"""
-            CREATE TABLE `{schema}`.`{dest_table}` (
-                StrikePrice INT NOT NULL,
-                ContractType VARCHAR(10) NOT NULL,
-                ExpiryDate DATETIME NOT NULL,
-                Timestamp DATETIME NOT NULL,
-                Open DECIMAL(10,4),
-                Close DECIMAL(10,4),
-                High DECIMAL(10,4),
-                Low DECIMAL(10,4),
-                Volume BIGINT,
-                PRIMARY KEY (StrikePrice, ContractType, ExpiryDate, Timestamp)
-            )
-            """
+            if table_type in ('stock', 'vix'):
+                # Stock/VIX table schema (simpler)
+                create_sql = f"""
+                CREATE TABLE `{schema}`.`{dest_table}` (
+                    Timestamp DATETIME NOT NULL,
+                    Open DECIMAL(10,4),
+                    Close DECIMAL(10,4),
+                    High DECIMAL(10,4),
+                    Low DECIMAL(10,4),
+                    Volume BIGINT,
+                    PRIMARY KEY (Timestamp)
+                )
+                """
+            else:
+                # Option table schema
+                create_sql = f"""
+                CREATE TABLE `{schema}`.`{dest_table}` (
+                    StrikePrice INT NOT NULL,
+                    ContractType VARCHAR(10) NOT NULL,
+                    ExpiryDate DATETIME NOT NULL,
+                    Timestamp DATETIME NOT NULL,
+                    Open DECIMAL(10,4),
+                    Close DECIMAL(10,4),
+                    High DECIMAL(10,4),
+                    Low DECIMAL(10,4),
+                    Volume BIGINT,
+                    PRIMARY KEY (StrikePrice, ContractType, ExpiryDate, Timestamp)
+                )
+                """
             cur.execute(create_sql)
             conn.commit()
         return True
