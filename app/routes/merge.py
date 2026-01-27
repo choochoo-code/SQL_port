@@ -22,14 +22,31 @@ merge_bp = Blueprint('merge', __name__)
 def parse_filename(filename: str):
     """
     Parse CSV filename to extract symbol, type, and timeframe.
-    Expected pattern: ib_data_<date>_<symbol>_<call|put>_<timeframe>_<date>.csv
+
+    Option pattern: ib_data_<date>_<symbol>_<call|put>_<timeframe>_<date>.csv
     Example: ib_data_01152026_qqq_call_1min_2026-01-23.csv
+
+    Stock pattern: ib_data_<date>_<symbol>_<timeframe>.csv
+    Example: ib_data_01202026_qqq_1 min.csv
     """
-    pattern = r".*_(?P<symbol>[a-zA-Z]+)_(?P<type>call|put)_(?P<tf>\d+min)_.*\.csv$"
-    match = re.match(pattern, filename.lower())
-    if not match:
-        return None
-    return match.groupdict()
+    # Try option pattern first (with call/put)
+    option_pattern = r".*_(?P<symbol>[a-zA-Z]+)_(?P<type>call|put)_(?P<tf>\d+\s*min)_.*\.csv$"
+    match = re.match(option_pattern, filename.lower())
+    if match:
+        result = match.groupdict()
+        result['tf'] = result['tf'].replace(' ', '')  # Normalize "1 min" to "1min"
+        return result
+
+    # Try stock pattern (no call/put)
+    stock_pattern = r".*_(?P<symbol>[a-zA-Z]+)_(?P<tf>\d+\s*min)\.csv$"
+    match = re.match(stock_pattern, filename.lower())
+    if match:
+        result = match.groupdict()
+        result['type'] = 'stock'  # Mark as stock type
+        result['tf'] = result['tf'].replace(' ', '')  # Normalize "1 min" to "1min"
+        return result
+
+    return None
 
 
 @merge_bp.route('/merge_data', methods=['GET', 'POST'])
@@ -70,8 +87,21 @@ def merge_option_data():
                     f"but selected schema is `{schema}`"
                 ), 400
 
-            # For option tables, validate type matches
-            if table != 'ib_stock_1min':
+            # Validate file type matches selected table
+            if table == 'ib_stock_1min':
+                # Stock table: only accept stock files
+                if option_type != 'stock':
+                    return (
+                        f"Filename `{file.filename}` is an option file (type: {option_type}), "
+                        f"but selected table is `{table}` (stock table)"
+                    ), 400
+            else:
+                # Option table: only accept option files (call/put)
+                if option_type == 'stock':
+                    return (
+                        f"Filename `{file.filename}` is a stock file, "
+                        f"but selected table is `{table}` (option table)"
+                    ), 400
                 table_lower = table.lower()
                 if option_type not in table_lower or timeframe not in table_lower:
                     return (
