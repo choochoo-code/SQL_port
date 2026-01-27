@@ -89,17 +89,34 @@ def merge_option_data():
 
             # Validate file type matches selected table
             if table == 'ib_stock_1min':
-                # Stock table: only accept stock files
+                # Stock table: only accept stock files (non-option, non-vix)
                 if option_type != 'stock':
                     return (
                         f"Filename `{file.filename}` is an option file (type: {option_type}), "
                         f"but selected table is `{table}` (stock table)"
                     ), 400
+                if symbol == 'vix':
+                    return (
+                        f"Filename `{file.filename}` is a VIX file, "
+                        f"use `ib_vix_1min` table instead"
+                    ), 400
+            elif table == 'ib_vix_1min':
+                # VIX table: only accept vix files
+                if option_type != 'stock':
+                    return (
+                        f"Filename `{file.filename}` is an option file (type: {option_type}), "
+                        f"but selected table is `{table}` (VIX table)"
+                    ), 400
+                if symbol != 'vix':
+                    return (
+                        f"Filename `{file.filename}` has symbol `{symbol}`, "
+                        f"but selected table is `{table}` (requires VIX files)"
+                    ), 400
             else:
                 # Option table: only accept option files (call/put)
                 if option_type == 'stock':
                     return (
-                        f"Filename `{file.filename}` is a stock file, "
+                        f"Filename `{file.filename}` is a stock/index file, "
                         f"but selected table is `{table}` (option table)"
                     ), 400
                 table_lower = table.lower()
@@ -124,7 +141,7 @@ def merge_option_data():
                 return f"Error reading {file.filename}: {e}", 500
 
         # Drop duplicates within CSV files first
-        if table == 'ib_stock_1min':
+        if table in ('ib_stock_1min', 'ib_vix_1min'):
             key_cols = ['Timestamp']
         else:
             key_cols = ['StrikePrice', 'ContractType', 'ExpiryDate', 'Timestamp']
@@ -157,7 +174,7 @@ def merge_option_data():
             # Create set of existing keys for fast lookup
             existing_keys = set()
             for row in existing_rows:
-                if table == 'ib_stock_1min':
+                if table in ('ib_stock_1min', 'ib_vix_1min'):
                     existing_keys.add(normalize_dt(row[0]))
                 else:
                     # (StrikePrice, ContractType, ExpiryDate, Timestamp)
@@ -180,7 +197,7 @@ def merge_option_data():
             skipped_rows = []
 
             def row_exists(row):
-                if table == 'ib_stock_1min':
+                if table in ('ib_stock_1min', 'ib_vix_1min'):
                     key = normalize_dt(row['Timestamp'])
                 else:
                     key = (
@@ -194,7 +211,7 @@ def merge_option_data():
             # Debug: print sample CSV keys
             if len(merged_data) > 0:
                 sample_row = merged_data.iloc[0]
-                if table == 'ib_stock_1min':
+                if table in ('ib_stock_1min', 'ib_vix_1min'):
                     sample_key = normalize_dt(sample_row['Timestamp'])
                 else:
                     sample_key = (

@@ -20,6 +20,10 @@ BASE_TABLES = {
     'ib_stock_1min': {
         'display': 'ib_stock_1min',
         'type': 'stock'
+    },
+    'ib_vix_1min': {
+        'display': 'ib_vix_1min',
+        'type': 'vix'
     }
 }
 
@@ -86,8 +90,8 @@ def create_base_table(schema, table_name):
     conn = get_db_connection(schema)
     try:
         with conn.cursor() as cur:
-            if table_name == 'ib_stock_1min':
-                # Stock table schema (simpler, no options-specific fields)
+            if table_name in ('ib_stock_1min', 'ib_vix_1min'):
+                # Stock/VIX table schema (simpler, no options-specific fields)
                 create_sql = f"""
                 CREATE TABLE IF NOT EXISTS `{table_name}` (
                     Timestamp DATETIME NOT NULL,
