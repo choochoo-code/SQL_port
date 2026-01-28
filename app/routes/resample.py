@@ -117,58 +117,48 @@ def execute_resample_stock(schema, src_table, dest_table, tf_minutes):
     conn = get_db_connection(schema)
     try:
         with conn.cursor() as cur:
+            # Use MIN/MAX on concatenated timestamp+value to reliably get first/last
+            # This avoids GROUP_CONCAT ordering issues
             resample_sql = f"""
             INSERT INTO `{schema}`.`{dest_table}`
             (Timestamp, Open, Close, High, Low, Volume)
 
-            WITH base AS (
+            WITH bucketed AS (
                 SELECT
+                    DATE_ADD(
+                      CONCAT(DATE(Timestamp), ' 09:30:00'),
+                      INTERVAL FLOOR(
+                        TIMESTAMPDIFF(
+                          MINUTE,
+                          CONCAT(DATE(Timestamp), ' 09:30:00'),
+                          Timestamp
+                        ) / {tf_minutes}
+                      ) * {tf_minutes} MINUTE
+                    ) AS candle_ts,
                     Timestamp AS orig_ts,
                     Open,
                     Close,
                     High,
                     Low,
-                    Volume,
-                    FLOOR(
-                      TIMESTAMPDIFF(
-                        MINUTE,
-                        CONCAT(DATE(Timestamp), ' 09:30:00'),
-                        Timestamp
-                      ) / {tf_minutes}
-                    ) AS bucket_id
+                    Volume
                 FROM `{schema}`.`{src_table}`
                 WHERE TIME(Timestamp) BETWEEN '09:30:00' AND '15:59:00'
                   AND Open IS NOT NULL
                   AND Close IS NOT NULL
                   AND High IS NOT NULL
                   AND Low IS NOT NULL
-            ),
-
-            bucketed AS (
-                SELECT
-                    DATE_ADD(
-                      CONCAT(DATE(orig_ts), ' 09:30:00'),
-                      INTERVAL bucket_id * {tf_minutes} MINUTE
-                    ) AS candle_ts,
-                    orig_ts,
-                    Open,
-                    Close,
-                    High,
-                    Low,
-                    Volume
-                FROM base
             )
 
             SELECT
                 candle_ts AS Timestamp,
-                SUBSTRING_INDEX(
-                  GROUP_CONCAT(Open ORDER BY orig_ts ASC),
-                  ',', 1
-                ) AS Open,
-                SUBSTRING_INDEX(
-                  GROUP_CONCAT(Close ORDER BY orig_ts DESC),
-                  ',', 1
-                ) AS Close,
+                CAST(SUBSTRING_INDEX(
+                  MIN(CONCAT(DATE_FORMAT(orig_ts, '%Y%m%d%H%i%s'), '|', Open)),
+                  '|', -1
+                ) AS DECIMAL(10,4)) AS Open,
+                CAST(SUBSTRING_INDEX(
+                  MAX(CONCAT(DATE_FORMAT(orig_ts, '%Y%m%d%H%i%s'), '|', Close)),
+                  '|', -1
+                ) AS DECIMAL(10,4)) AS Close,
                 MAX(High) AS High,
                 MIN(Low) AS Low,
                 SUM(Volume) AS Volume
