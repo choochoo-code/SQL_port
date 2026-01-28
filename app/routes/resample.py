@@ -117,14 +117,49 @@ def execute_resample_stock(schema, src_table, dest_table, tf_minutes):
     conn = get_db_connection(schema)
     try:
         with conn.cursor() as cur:
-            # Use MIN/MAX on concatenated timestamp+value to reliably get first/last
-            # This avoids GROUP_CONCAT ordering issues
+            # Simple approach: get distinct candle timestamps, then use subqueries
             resample_sql = f"""
             INSERT INTO `{schema}`.`{dest_table}`
             (Timestamp, Open, Close, High, Low, Volume)
 
-            WITH bucketed AS (
-                SELECT
+            SELECT
+                candles.candle_ts AS Timestamp,
+                (
+                    SELECT src.Open
+                    FROM `{schema}`.`{src_table}` src
+                    WHERE src.Timestamp >= candles.candle_ts
+                      AND src.Timestamp < DATE_ADD(candles.candle_ts, INTERVAL {tf_minutes} MINUTE)
+                    ORDER BY src.Timestamp ASC
+                    LIMIT 1
+                ) AS Open,
+                (
+                    SELECT src.Close
+                    FROM `{schema}`.`{src_table}` src
+                    WHERE src.Timestamp >= candles.candle_ts
+                      AND src.Timestamp < DATE_ADD(candles.candle_ts, INTERVAL {tf_minutes} MINUTE)
+                    ORDER BY src.Timestamp DESC
+                    LIMIT 1
+                ) AS Close,
+                (
+                    SELECT MAX(src.High)
+                    FROM `{schema}`.`{src_table}` src
+                    WHERE src.Timestamp >= candles.candle_ts
+                      AND src.Timestamp < DATE_ADD(candles.candle_ts, INTERVAL {tf_minutes} MINUTE)
+                ) AS High,
+                (
+                    SELECT MIN(src.Low)
+                    FROM `{schema}`.`{src_table}` src
+                    WHERE src.Timestamp >= candles.candle_ts
+                      AND src.Timestamp < DATE_ADD(candles.candle_ts, INTERVAL {tf_minutes} MINUTE)
+                ) AS Low,
+                (
+                    SELECT SUM(src.Volume)
+                    FROM `{schema}`.`{src_table}` src
+                    WHERE src.Timestamp >= candles.candle_ts
+                      AND src.Timestamp < DATE_ADD(candles.candle_ts, INTERVAL {tf_minutes} MINUTE)
+                ) AS Volume
+            FROM (
+                SELECT DISTINCT
                     DATE_ADD(
                       CONCAT(DATE(Timestamp), ' 09:30:00'),
                       INTERVAL FLOOR(
@@ -134,37 +169,11 @@ def execute_resample_stock(schema, src_table, dest_table, tf_minutes):
                           Timestamp
                         ) / {tf_minutes}
                       ) * {tf_minutes} MINUTE
-                    ) AS candle_ts,
-                    Timestamp AS orig_ts,
-                    Open,
-                    Close,
-                    High,
-                    Low,
-                    Volume
+                    ) AS candle_ts
                 FROM `{schema}`.`{src_table}`
                 WHERE TIME(Timestamp) BETWEEN '09:30:00' AND '15:59:00'
-                  AND Open IS NOT NULL
-                  AND Close IS NOT NULL
-                  AND High IS NOT NULL
-                  AND Low IS NOT NULL
-            )
-
-            SELECT
-                candle_ts AS Timestamp,
-                CAST(SUBSTRING_INDEX(
-                  MIN(CONCAT(DATE_FORMAT(orig_ts, '%Y%m%d%H%i%s'), '|', Open)),
-                  '|', -1
-                ) AS DECIMAL(10,4)) AS Open,
-                CAST(SUBSTRING_INDEX(
-                  MAX(CONCAT(DATE_FORMAT(orig_ts, '%Y%m%d%H%i%s'), '|', Close)),
-                  '|', -1
-                ) AS DECIMAL(10,4)) AS Close,
-                MAX(High) AS High,
-                MIN(Low) AS Low,
-                SUM(Volume) AS Volume
-            FROM bucketed
-            GROUP BY candle_ts
-            ORDER BY candle_ts
+            ) candles
+            ORDER BY candles.candle_ts
             """
             cur.execute(resample_sql)
             conn.commit()
