@@ -116,10 +116,8 @@ def execute_resample_stock(schema, src_table, dest_table, tf_minutes):
     """Execute resampling from 1min to higher timeframe for stock/VIX tables.
 
     Uses first_ts/last_ts JOIN pattern for deterministic Open/Close values:
-    1. Compute bucket_id and candle_ts for each row
-    2. Find first_ts (MIN) and last_ts (MAX) per bucket
-    3. JOIN back to get Open from first row, Close from last row
-    4. Aggregate High (MAX), Low (MIN), Volume (SUM)
+    1. Compute bucket aggregates with first_ts (MIN) and last_ts (MAX)
+    2. JOIN back to SOURCE TABLE to get Open from first_ts, Close from last_ts
     """
     conn = get_db_connection(schema)
     try:
@@ -128,16 +126,15 @@ def execute_resample_stock(schema, src_table, dest_table, tf_minutes):
             INSERT INTO `{schema}`.`{dest_table}`
             (Timestamp, Open, Close, High, Low, Volume)
 
-            WITH bucketed AS (
+            SELECT
+                bb.candle_ts AS Timestamp,
+                src_first.Open AS Open,
+                src_last.Close AS Close,
+                bb.High AS High,
+                bb.Low AS Low,
+                bb.Volume AS Volume
+            FROM (
                 SELECT
-                    DATE(Timestamp) AS trade_date,
-                    FLOOR(
-                        TIMESTAMPDIFF(
-                            MINUTE,
-                            CONCAT(DATE(Timestamp), ' 09:30:00'),
-                            Timestamp
-                        ) / {tf_minutes}
-                    ) AS bucket_id,
                     DATE_ADD(
                         CONCAT(DATE(Timestamp), ' 09:30:00'),
                         INTERVAL FLOOR(
@@ -148,50 +145,23 @@ def execute_resample_stock(schema, src_table, dest_table, tf_minutes):
                             ) / {tf_minutes}
                         ) * {tf_minutes} MINUTE
                     ) AS candle_ts,
-                    Timestamp,
-                    Open,
-                    Close,
-                    High,
-                    Low,
-                    Volume
+                    MIN(Timestamp) AS first_ts,
+                    MAX(Timestamp) AS last_ts,
+                    MAX(High) AS High,
+                    MIN(Low) AS Low,
+                    SUM(Volume) AS Volume
                 FROM `{schema}`.`{src_table}`
                 WHERE TIME(Timestamp) BETWEEN '09:30:00' AND '15:59:00'
                   AND Open IS NOT NULL
                   AND Close IS NOT NULL
                   AND High IS NOT NULL
                   AND Low IS NOT NULL
-            ),
-
-            bucket_bounds AS (
-                SELECT
-                    trade_date,
-                    bucket_id,
-                    candle_ts,
-                    MIN(Timestamp) AS first_ts,
-                    MAX(Timestamp) AS last_ts,
-                    MAX(High) AS High,
-                    MIN(Low) AS Low,
-                    SUM(Volume) AS Volume
-                FROM bucketed
-                GROUP BY trade_date, bucket_id, candle_ts
-            )
-
-            SELECT
-                bb.candle_ts AS Timestamp,
-                first_row.Open AS Open,
-                last_row.Close AS Close,
-                bb.High AS High,
-                bb.Low AS Low,
-                bb.Volume AS Volume
-            FROM bucket_bounds bb
-            JOIN bucketed first_row
-                ON first_row.trade_date = bb.trade_date
-                AND first_row.bucket_id = bb.bucket_id
-                AND first_row.Timestamp = bb.first_ts
-            JOIN bucketed last_row
-                ON last_row.trade_date = bb.trade_date
-                AND last_row.bucket_id = bb.bucket_id
-                AND last_row.Timestamp = bb.last_ts
+                GROUP BY candle_ts
+            ) bb
+            JOIN `{schema}`.`{src_table}` src_first
+                ON src_first.Timestamp = bb.first_ts
+            JOIN `{schema}`.`{src_table}` src_last
+                ON src_last.Timestamp = bb.last_ts
             ORDER BY bb.candle_ts
             """
             cur.execute(resample_sql)
