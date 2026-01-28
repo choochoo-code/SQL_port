@@ -113,67 +113,86 @@ def execute_resample_option(schema, src_table, dest_table, tf_minutes):
 
 
 def execute_resample_stock(schema, src_table, dest_table, tf_minutes):
-    """Execute resampling from 1min to higher timeframe for stock/VIX tables"""
+    """Execute resampling from 1min to higher timeframe for stock/VIX tables.
+
+    Uses first_ts/last_ts JOIN pattern for deterministic Open/Close values:
+    1. Compute bucket_id and candle_ts for each row
+    2. Find first_ts (MIN) and last_ts (MAX) per bucket
+    3. JOIN back to get Open from first row, Close from last row
+    4. Aggregate High (MAX), Low (MIN), Volume (SUM)
+    """
     conn = get_db_connection(schema)
     try:
         with conn.cursor() as cur:
-            # Simple approach: get distinct candle timestamps, then use subqueries
             resample_sql = f"""
             INSERT INTO `{schema}`.`{dest_table}`
             (Timestamp, Open, Close, High, Low, Volume)
 
-            SELECT
-                candles.candle_ts AS Timestamp,
-                (
-                    SELECT src.Open
-                    FROM `{schema}`.`{src_table}` src
-                    WHERE src.Timestamp >= candles.candle_ts
-                      AND src.Timestamp < DATE_ADD(candles.candle_ts, INTERVAL {tf_minutes} MINUTE)
-                    ORDER BY src.Timestamp ASC
-                    LIMIT 1
-                ) AS Open,
-                (
-                    SELECT src.Close
-                    FROM `{schema}`.`{src_table}` src
-                    WHERE src.Timestamp >= candles.candle_ts
-                      AND src.Timestamp < DATE_ADD(candles.candle_ts, INTERVAL {tf_minutes} MINUTE)
-                    ORDER BY src.Timestamp DESC
-                    LIMIT 1
-                ) AS Close,
-                (
-                    SELECT MAX(src.High)
-                    FROM `{schema}`.`{src_table}` src
-                    WHERE src.Timestamp >= candles.candle_ts
-                      AND src.Timestamp < DATE_ADD(candles.candle_ts, INTERVAL {tf_minutes} MINUTE)
-                ) AS High,
-                (
-                    SELECT MIN(src.Low)
-                    FROM `{schema}`.`{src_table}` src
-                    WHERE src.Timestamp >= candles.candle_ts
-                      AND src.Timestamp < DATE_ADD(candles.candle_ts, INTERVAL {tf_minutes} MINUTE)
-                ) AS Low,
-                (
-                    SELECT SUM(src.Volume)
-                    FROM `{schema}`.`{src_table}` src
-                    WHERE src.Timestamp >= candles.candle_ts
-                      AND src.Timestamp < DATE_ADD(candles.candle_ts, INTERVAL {tf_minutes} MINUTE)
-                ) AS Volume
-            FROM (
-                SELECT DISTINCT
-                    DATE_ADD(
-                      CONCAT(DATE(Timestamp), ' 09:30:00'),
-                      INTERVAL FLOOR(
+            WITH bucketed AS (
+                SELECT
+                    DATE(Timestamp) AS trade_date,
+                    FLOOR(
                         TIMESTAMPDIFF(
-                          MINUTE,
-                          CONCAT(DATE(Timestamp), ' 09:30:00'),
-                          Timestamp
+                            MINUTE,
+                            CONCAT(DATE(Timestamp), ' 09:30:00'),
+                            Timestamp
                         ) / {tf_minutes}
-                      ) * {tf_minutes} MINUTE
-                    ) AS candle_ts
+                    ) AS bucket_id,
+                    DATE_ADD(
+                        CONCAT(DATE(Timestamp), ' 09:30:00'),
+                        INTERVAL FLOOR(
+                            TIMESTAMPDIFF(
+                                MINUTE,
+                                CONCAT(DATE(Timestamp), ' 09:30:00'),
+                                Timestamp
+                            ) / {tf_minutes}
+                        ) * {tf_minutes} MINUTE
+                    ) AS candle_ts,
+                    Timestamp,
+                    Open,
+                    Close,
+                    High,
+                    Low,
+                    Volume
                 FROM `{schema}`.`{src_table}`
                 WHERE TIME(Timestamp) BETWEEN '09:30:00' AND '15:59:00'
-            ) candles
-            ORDER BY candles.candle_ts
+                  AND Open IS NOT NULL
+                  AND Close IS NOT NULL
+                  AND High IS NOT NULL
+                  AND Low IS NOT NULL
+            ),
+
+            bucket_bounds AS (
+                SELECT
+                    trade_date,
+                    bucket_id,
+                    candle_ts,
+                    MIN(Timestamp) AS first_ts,
+                    MAX(Timestamp) AS last_ts,
+                    MAX(High) AS High,
+                    MIN(Low) AS Low,
+                    SUM(Volume) AS Volume
+                FROM bucketed
+                GROUP BY trade_date, bucket_id, candle_ts
+            )
+
+            SELECT
+                bb.candle_ts AS Timestamp,
+                first_row.Open AS Open,
+                last_row.Close AS Close,
+                bb.High AS High,
+                bb.Low AS Low,
+                bb.Volume AS Volume
+            FROM bucket_bounds bb
+            JOIN bucketed first_row
+                ON first_row.trade_date = bb.trade_date
+                AND first_row.bucket_id = bb.bucket_id
+                AND first_row.Timestamp = bb.first_ts
+            JOIN bucketed last_row
+                ON last_row.trade_date = bb.trade_date
+                AND last_row.bucket_id = bb.bucket_id
+                AND last_row.Timestamp = bb.last_ts
+            ORDER BY bb.candle_ts
             """
             cur.execute(resample_sql)
             conn.commit()
