@@ -123,7 +123,7 @@ def execute_resample_stock(schema, src_table, dest_table, tf_minutes):
 
             WITH base AS (
                 SELECT
-                    Timestamp,
+                    Timestamp AS orig_ts,
                     Open,
                     Close,
                     High,
@@ -147,10 +147,10 @@ def execute_resample_stock(schema, src_table, dest_table, tf_minutes):
             bucketed AS (
                 SELECT
                     DATE_ADD(
-                      CONCAT(DATE(Timestamp), ' 09:30:00'),
+                      CONCAT(DATE(orig_ts), ' 09:30:00'),
                       INTERVAL bucket_id * {tf_minutes} MINUTE
                     ) AS candle_ts,
-                    Timestamp,
+                    orig_ts,
                     Open,
                     Close,
                     High,
@@ -162,11 +162,11 @@ def execute_resample_stock(schema, src_table, dest_table, tf_minutes):
             SELECT
                 candle_ts AS Timestamp,
                 SUBSTRING_INDEX(
-                  GROUP_CONCAT(Open ORDER BY Timestamp),
+                  GROUP_CONCAT(Open ORDER BY orig_ts ASC),
                   ',', 1
                 ) AS Open,
                 SUBSTRING_INDEX(
-                  GROUP_CONCAT(Close ORDER BY Timestamp DESC),
+                  GROUP_CONCAT(Close ORDER BY orig_ts DESC),
                   ',', 1
                 ) AS Close,
                 MAX(High) AS High,
